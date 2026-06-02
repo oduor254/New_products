@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Product Analytics Dashboard</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap"
+        rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        /* ─── RESET & BASE ─────────────────────────────── */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0b0d0f;
+            --surface: #13161a;
+            --surface2: #1c2026;
+            --border: #2a2f38;
+            --gold: #c9a84c;
+            --gold-lt: #e8c97e;
+            --teal: #3ecfb2;
+            --rose: #e8637a;
+            --blue: #5b9cf6;
+            --purple: #a78bfa;
+            --text: #e8eaf0;
+            --muted: #7a8394;
+            --font-body: 'DM Sans', sans-serif;
+            --font-head: 'Playfair Display', serif;
+            --radius: 14px;
+            --shadow: 0 4px 30px rgba(0, 0, 0, .45);
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-body);
+            font-size: 14px;
+            min-height: 100vh;
+            padding: 0 0 60px;
+        }
+
+        /* ─── NOISE TEXTURE OVERLAY ────────────────────── */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 0;
+            opacity: .6;
+        }
+
+        /* ─── HEADER ────────────────────────────────────── */
+        header {
+            position: relative;
+            background: linear-gradient(135deg, #0f1318 0%, #151b23 60%, #0d1117 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 28px 40px 24px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+        }
+
+        header::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 40px;
+            width: 80px;
+            height: 2px;
+            background: linear-gradient(90deg, var(--gold), transparent);
+        }
+
+        .header-left h1 {
+            font-family: var(--font-head);
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: .5px;
+            background: linear-gradient(135deg, var(--gold-lt), var(--gold));
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-left p {
+            color: var(--muted);
+            font-size: 13px;
+            margin-top: 4px;
+            letter-spacing: .3px;
+        }
+
+        .header-right {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .badge {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 5px 14px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        #refresh-btn {
+            background: linear-gradient(135deg, var(--gold), #a8873a);
+            border: none;
+            border-radius: 20px;
+            padding: 7px 18px;
+            font-size: 12px;
+            font-family: var(--font-body);
+            font-weight: 600;
+            color: #0b0d0f;
+            cursor: pointer;
+            transition: opacity .2s;
+        }
+
+        #refresh-btn:hover {
+            opacity: .85;
+        }
+
+        /* ─── LAYOUT ────────────────────────────────────── */
+        main {
+            position: relative;
+            z-index: 1;
+            padding: 32px 40px;
+        }
+
+        section {
+            margin-bottom: 36px;
+        }
+
+        .section-title {
+            font-family: var(--font-head);
+            font-size: 17px;
+            letter-spacing: .4px;
+            color: var(--gold-lt);
+            margin-bottom: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, var(--border), transparent);
+        }
+
+        /* ─── CARDS GRID ────────────────────────────────── */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+            gap: 16px;
+        }
+
+        .metric-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 22px 20px;
+            position: relative;
+            overflow: hidden;
+            transition: transform .2s, border-color .2s;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--gold);
+        }
+
+        .metric-card::before {
+            content: attr(data-icon);
+            position: absolute;
+            right: 14px;
+            top: 14px;
+            font-size: 22px;
+            opacity: .15;
+        }
+
+        .metric-card .label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+
+        .metric-card .value {
+            font-family: var(--font-head);
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .metric-card .sub {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+
+        .metric-card.accent-gold {
+            border-color: rgba(201, 168, 76, .4);
+        }
+
+        .metric-card.accent-teal {
+            border-color: rgba(62, 207, 178, .3);
+        }
+
+        .metric-card.accent-rose {
+            border-color: rgba(232, 99, 122, .3);
+        }
+
+        .metric-card.accent-blue {
+            border-color: rgba(91, 156, 246, .3);
+        }
+
+        /* ─── CHARTS GRID ───────────────────────────────── */
+        .charts-grid {
+            display: grid;
+            gap: 20px;
+        }
+
+        .charts-grid.two-col {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .charts-grid.three-col {
+            grid-template-columns: 2fr 1fr;
+        }
+
+        @media(max-width:900px) {
+
+            .charts-grid.two-col,
+            .charts-grid.three-col {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .chart-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 22px 24px;
+            box-shadow: var(--shadow);
+        }
+
+        .chart-card h3 {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--muted);
+            margin-bottom: 18px;
+        }
+
+        .chart-wrap {
+            position: relative;
+        }
+
+        .chart-wrap.tall {
+            height: 260px;
+        }
+
+        .chart-wrap.short {
+            height: 220px;
+        }
+
+        .chart-wrap.med {
+            height: 300px;
+        }
+
+        /* ─── TABLE ─────────────────────────────────────── */
+        .table-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .table-card h3 {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--muted);
+            padding: 18px 22px 0;
+            margin-bottom: 14px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead th {
+            background: var(--surface2);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--muted);
+            padding: 10px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        tbody tr {
+            border-bottom: 1px solid rgba(255, 255, 255, .04);
+            transition: background .15s;
+        }
+
+        tbody tr:hover {
+            background: var(--surface2);
+        }
+
+        tbody td {
+            padding: 11px 16px;
+            font-size: 13px;
+        }
+
+        tbody td:first-child {
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        tbody td.num {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .pct-bar-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .pct-bar {
+            height: 5px;
+            border-radius: 3px;
+            background: var(--gold);
+            min-width: 3px;
+        }
+
+        /* ─── INSIGHTS ──────────────────────────────────── */
+        .insights-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .insight-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--gold);
+            border-radius: var(--radius);
+            padding: 18px 20px;
+        }
+
+        .insight-card.teal {
+            border-left-color: var(--teal);
+        }
+
+        .insight-card.rose {
+            border-left-color: var(--rose);
+        }
+
+        .insight-card.blue {
+            border-left-color: var(--blue);
+        }
+
+        .insight-card.purple {
+            border-left-color: var(--purple);
+        }
+
+        .insight-card h4 {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 7px;
+        }
+
+        .insight-card p {
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        /* ─── LOADER ────────────────────────────────────── */
+        .loader {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            color: var(--muted);
+            font-size: 13px;
+            gap: 8px;
+        }
+
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--border);
+            border-top-color: var(--gold);
+            border-radius: 50%;
+            animation: spin .7s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* ─── BAG METRICS ───────────────────────────────── */
+        .bag-kpis {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+
+        .bag-kpi {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px 18px;
+        }
+
+        .bag-kpi .lbl {
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        .bag-kpi .val {
+            font-family: var(--font-head);
+            font-size: 22px;
+        }
+
+        /* ─── FILTER PANEL ──────────────────────────────────── */
+        .filter-panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            align-items: flex-end;
+            margin-bottom: 20px;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+            min-width: 180px;
+        }
+        .filter-group label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--muted);
+        }
+        .filter-group select,
+        .filter-group input[type="date"] {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            color: var(--text);
+            font-family: var(--font-body);
+            font-size: 13px;
+            outline: none;
+            transition: border-color .2s;
+            color-scheme: dark;
+        }
+        .filter-group select:focus,
+        .filter-group input[type="date"]:focus {
+            border-color: var(--gold);
+        }
+        #apply-filter-btn {
+            background: linear-gradient(135deg, var(--gold), #a8873a);
+            border: none;
+            border-radius: 8px;
+            padding: 9px 22px;
+            font-size: 13px;
+            font-family: var(--font-body);
+            font-weight: 600;
+            color: #0b0d0f;
+            cursor: pointer;
+            transition: opacity .2s;
+            white-space: nowrap;
+        }
+        #apply-filter-btn:hover { opacity: .85; }
+        .filter-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .filter-stat {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px 18px;
+        }
+        .filter-stat .lbl { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+        .filter-stat .val { font-family: var(--font-head); font-size: 22px; }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="header-left">
+            <h1>Product Analytics Dashboard</h1>
+            <p id="date-range-badge">Loading data range…</p>
+        </div>
+        <div class="header-right">
+            <span class="badge" id="total-badge">— customers</span>
+            <button id="refresh-btn" onclick="loadAll()">↻ Refresh</button>
+        </div>
+    </header>
+
+    <main>
+
+        <!-- ① FILTER (moved to top) -->
+        <section id="filter-section">
+            <div class="section-title">Product &amp; Period Filter</div>
+            <div class="filter-panel">
+                <div class="filter-group">
+                    <label for="filter-product">Product</label>
+                    <select id="filter-product"><option value="">All Products</option></select>
+                </div>
+                <div class="filter-group">
+                    <label for="filter-start">From</label>
+                    <input type="date" id="filter-start" />
+                </div>
+                <div class="filter-group">
+                    <label for="filter-end">To</label>
+                    <input type="date" id="filter-end" />
+                </div>
+                <button id="apply-filter-btn" onclick="applyFilter()">Apply Filter</button>
+            </div>
+            <div id="filter-results"></div>
+        </section>
+
+        <!-- ① KEY METRICS -->
+        <section>
+            <div class="section-title">Key Metrics</div>
+            <div class="metrics-grid" id="metrics-grid">
+                <div class="loader">
+                    <div class="spinner"></div> Loading…
+                </div>
+            </div>
+        </section>
+
+        <!-- ② GENDER + WEEKLY TREND -->
+        <section>
+            <div class="section-title">Sales Trend & Gender</div>
+            <div class="charts-grid three-col">
+                <div class="chart-card">
+                    <h3>Weekly Sales Trend</h3>
+                    <div class="chart-wrap tall"><canvas id="weeklyChart"></canvas></div>
+                </div>
+                <div class="chart-card">
+                    <h3>Gender Split</h3>
+                    <div class="chart-wrap tall"><canvas id="genderChart"></canvas></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ③ COLOR ANALYSIS -->
+        <section>
+            <div class="section-title">Color Analysis</div>
+            <div class="charts-grid two-col">
+                <div class="chart-card">
+                    <h3>Sales by Color</h3>
+                    <div class="chart-wrap med"><canvas id="colorBarChart"></canvas></div>
+                </div>
+                <div class="table-card">
+                    <h3>Color Breakdown</h3>
+                    <div id="color-table">
+                        <div class="loader">
+                            <div class="spinner"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ④ LOCATION ANALYSIS -->
+        <section>
+            <div class="section-title">Location Analysis</div>
+            <div class="charts-grid two-col">
+                <div class="table-card">
+                    <h3>Shop Performance</h3>
+                    <div id="location-table">
+                        <div class="loader">
+                            <div class="spinner"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h3>Revenue by Location</h3>
+                    <div class="chart-wrap med"><canvas id="locationChart"></canvas></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ⑤ PRODUCT & CATEGORY -->
+        <section>
+            <div class="section-title">Product & Category Breakdown</div>
+            <div class="charts-grid two-col">
+                <div class="chart-card">
+                    <h3>Sales by Product</h3>
+                    <div class="chart-wrap med"><canvas id="productChart"></canvas></div>
+                </div>
+                <div class="chart-card">
+                    <h3>Sales by Category</h3>
+                    <div class="chart-wrap med"><canvas id="categoryChart"></canvas></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ⑥ MONTHLY TREND -->
+        <section>
+            <div class="section-title">Monthly Sales Trend</div>
+            <div class="chart-card">
+                <h3>Monthly Customers & Revenue</h3>
+                <div class="chart-wrap" style="height:240px"><canvas id="monthlyChart"></canvas></div>
+            </div>
+        </section>
+
+        <!-- ⑦ BAGS PERFORMANCE -->
+        <section>
+            <div class="section-title">Bags Performance</div>
+            <div id="bags-section">
+                <div class="loader">
+                    <div class="spinner"></div> Loading bag data…
+                </div>
+            </div>
+        </section>
+
+        <!-- Filter moved to top -->
+
+        <!-- ⑨ KEY INSIGHTS -->
+        <section>
+            <div class="section-title">Key Insights</div>
+            <div class="insights-grid" id="insights-grid">
+                <div class="loader">
+                    <div class="spinner"></div> Generating insights…
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        /* ─── COLOUR PALETTE ────────────────────────────── */
+        const PALETTE = [
+            '#c9a84c', '#3ecfb2', '#5b9cf6', '#e8637a', '#a78bfa',
+            '#f59e0b', '#10b981', '#6366f1', '#ef4444', '#8b5cf6',
+            '#06b6d4', '#f97316', '#84cc16', '#ec4899', '#14b8a6',
+        ];
+
+        const chartDefaults = {
+            color: '#7a8394',
+            plugins: { legend: { labels: { color: '#9ca3af', font: { size: 12 } } } },
+            scales: {
+                x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.05)' } },
+                y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.05)' } },
+            }
+        };
+
+        Chart.defaults.color = '#7a8394';
+        Chart.defaults.borderColor = 'rgba(255,255,255,.06)';
+
+        let charts = {};
+
+        function destroyChart(id) {
+            if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+        }
+
+        /* ─── FETCH HELPERS ─────────────────────────────── */
+        async function api(path) {
+            const r = await fetch(path);
+            if (!r.ok) throw new Error(`${path} → ${r.status}`);
+            return r.json();
+        }
+
+        /* ─── LOAD ALL ──────────────────────────────────── */
+        async function loadAll() {
+            document.getElementById('refresh-btn').textContent = '⏳ Loading…';
+            try {
+                await Promise.all([
+                    loadMetrics(),
+                    loadWeekly(),
+                    loadColors(),
+                    loadLocations(),
+                    loadProducts(),
+                    loadCategories(),
+                    loadMonthly(),
+                    loadBags(),
+                ]);
+            } catch (e) {
+                console.error(e);
+                alert('Error loading data. Check Flask is running and the sheet name is correct.');
+            }
+            document.getElementById('refresh-btn').textContent = '↻ Refresh';
+            buildInsights();
+        }
+
+        /* ─── KEY METRICS ───────────────────────────────── */
+        async function loadMetrics() {
+            const d = await api('/api/key-metrics');
+            document.getElementById('date-range-badge').textContent = d.date_range;
+            document.getElementById('total-badge').textContent = `${d.total_customers.toLocaleString()} customers`;
+
+            const grid = document.getElementById('metrics-grid');
+            grid.innerHTML = `
+    ${card('Total Customers', d.total_customers.toLocaleString(), d.date_range, '👥', 'accent-gold')}
+    ${card('Female Customers', d.female_customers.toLocaleString(), `${d.female_pct}% of total`, '♀️', 'accent-rose')}
+    ${card('Male Customers', d.male_customers.toLocaleString(), `${d.male_pct}% of total`, '♂️', 'accent-blue')}
+    ${card('Unique Locations', d.unique_locations, 'shops / regions', '📍', 'accent-teal')}
+    ${card('Total Revenue', 'KES ' + d.total_revenue.toLocaleString(), 'across all sales', '💰', 'accent-gold')}
+    ${card('Avg. Price', 'KES ' + d.avg_price.toLocaleString(), 'per item', '🏷️', '')}
+    ${card('Top Product', d.top_product, 'best seller', '🥇', 'accent-teal')}
+    ${card('Top Category', d.top_category, 'most popular', '📦', '')}
+  `;
+        }
+
+        function card(label, value, sub, icon, accent) {
+            return `<div class="metric-card ${accent}" data-icon="${icon}">
+    <div class="label">${label}</div>
+    <div class="value">${value}</div>
+    <div class="sub">${sub}</div>
+  </div>`;
+        }
+
+        /* ─── WEEKLY TREND + GENDER ─────────────────────── */
+        async function loadWeekly() {
+            const [weekly, metrics] = await Promise.all([api('/api/weekly-trend'), api('/api/key-metrics')]);
+
+            destroyChart('weekly'); destroyChart('gender');
+
+            // Weekly line chart
+            const wCtx = document.getElementById('weeklyChart').getContext('2d');
+            charts.weekly = new Chart(wCtx, {
+                type: 'line',
+                data: {
+                    labels: weekly.map(w => w.Week),
+                    datasets: [{
+                        label: 'Customers',
+                        data: weekly.map(w => w.count),
+                        borderColor: '#c9a84c',
+                        backgroundColor: 'rgba(201,168,76,.12)',
+                        borderWidth: 2, pointRadius: 4,
+                        pointBackgroundColor: '#c9a84c',
+                        fill: true, tension: .4,
+                    }, {
+                        label: 'Revenue (KES)',
+                        data: weekly.map(w => w.revenue),
+                        borderColor: '#3ecfb2',
+                        backgroundColor: 'rgba(62,207,178,.08)',
+                        borderWidth: 2, pointRadius: 3,
+                        fill: true, tension: .4,
+                        yAxisID: 'y1',
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#9ca3af', font: { size: 11 } } } },
+                    scales: {
+                        x: { ticks: { color: '#7a8394', maxRotation: 45 }, grid: { color: 'rgba(255,255,255,.04)' } },
+                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
+                        y1: { position: 'right', ticks: { color: '#3ecfb2' }, grid: { drawOnChartArea: false } },
+                    }
+                }
+            });
+
+            // Gender doughnut
+            const gCtx = document.getElementById('genderChart').getContext('2d');
+            charts.gender = new Chart(gCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Female', 'Male'],
+                    datasets: [{
+                        data: [metrics.female_customers, metrics.male_customers],
+                        backgroundColor: ['#e8637a', '#5b9cf6'], borderWidth: 0,
+                        hoverOffset: 6
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, cutout: '68%',
+                    plugins: {
+                        legend: { position: 'bottom', labels: { color: '#9ca3af', padding: 14 } },
+                        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw.toLocaleString()} (${((ctx.raw / (metrics.female_customers + metrics.male_customers)) * 100).toFixed(1)}%)` } }
+                    }
+                }
+            });
+        }
+
+        /* ─── COLOR ANALYSIS ────────────────────────────── */
+        async function loadColors() {
+            const data = await api('/api/color-analysis');
+            destroyChart('colorBar');
+
+            const cCtx = document.getElementById('colorBarChart').getContext('2d');
+            charts.colorBar = new Chart(cCtx, {
+                type: 'bar',
+                data: {
+                    labels: data.map(d => d.color),
+                    datasets: [{
+                        label: 'Count', data: data.map(d => d.count),
+                        backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length]),
+                        borderRadius: 6, borderSkipped: false
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
+                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }
+                    }
+                }
+            });
+
+            const max = Math.max(...data.map(d => d.count));
+            document.getElementById('color-table').innerHTML = `
+    <table>
+      <thead><tr><th>Color</th><th>Count</th><th>%</th><th>Share</th></tr></thead>
+      <tbody>
+        ${data.map((r, i) => `<tr>
+          <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${PALETTE[i % PALETTE.length]};margin-right:8px;"></span>${r.color}</td>
+          <td class="num">${r.count.toLocaleString()}</td>
+          <td class="num">${r.percentage}%</td>
+          <td><div class="pct-bar-wrap"><div class="pct-bar" style="width:${Math.round(r.count / max * 120)}px;background:${PALETTE[i % PALETTE.length]}"></div></div></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+        }
+
+        /* ─── LOCATION ANALYSIS ─────────────────────────── */
+        async function loadLocations() {
+            const data = await api('/api/location-analysis');
+            destroyChart('location');
+
+            const lCtx = document.getElementById('locationChart').getContext('2d');
+            charts.location = new Chart(lCtx, {
+                type: 'bar',
+                data: {
+                    labels: data.map(d => d.shop),
+                    datasets: [{
+                        label: 'Revenue (KES)',
+                        data: data.map(d => d.revenue || 0),
+                        backgroundColor: 'rgba(62,207,178,.7)',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
+                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }
+                    }
+                }
+            });
+
+            const max = Math.max(...data.map(d => d.count));
+            document.getElementById('location-table').innerHTML = `
+    <table>
+      <thead><tr><th>Shop / Location</th><th>Count</th><th>%</th><th>Revenue</th></tr></thead>
+      <tbody>
+        ${data.map((r, i) => `<tr>
+          <td>${r.shop}</td>
+          <td class="num">${r.count.toLocaleString()}</td>
+          <td class="num">
+            <div class="pct-bar-wrap">
+              ${r.percentage}%
+              <div class="pct-bar" style="width:${Math.round(r.count / max * 80)}px"></div>
+            </div>
+          </td>
+          <td class="num" style="color:var(--teal)">${r.revenue ? 'KES ' + r.revenue.toLocaleString() : '—'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+        }
+
+        /* ─── PRODUCT ANALYSIS ──────────────────────────── */
+        async function loadProducts() {
+            const data = await api('/api/product-analysis');
+            destroyChart('product');
+            const ctx = document.getElementById('productChart').getContext('2d');
+            charts.product = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: data.map(d => d.product),
+                    datasets: [{
+                        data: data.map(d => d.count),
+                        backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length]),
+                        borderWidth: 0, hoverOffset: 6
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, cutout: '55%',
+                    plugins: { legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 11 }, boxWidth: 12 } } }
+                }
+            });
+        }
+
+        /* ─── CATEGORY ANALYSIS ─────────────────────────── */
+        async function loadCategories() {
+            const data = await api('/api/category-analysis');
+            destroyChart('category');
+            const ctx = document.getElementById('categoryChart').getContext('2d');
+            charts.category = new Chart(ctx, {
+                type: 'polarArea',
+                data: {
+                    labels: data.map(d => d.category),
+                    datasets: [{
+                        data: data.map(d => d.count),
+                        backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length] + '99'),
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 11 }, boxWidth: 12 } } },
+                    scales: { r: { ticks: { color: '#7a8394', backdropColor: 'transparent' }, grid: { color: 'rgba(255,255,255,.06)' } } }
+                }
+            });
+        }
+
+        /* ─── MONTHLY TREND ─────────────────────────────── */
+        async function loadMonthly() {
+            const data = await api('/api/monthly-trend');
+            destroyChart('monthly');
+            if (!data.length) return;
+            const ctx = document.getElementById('monthlyChart').getContext('2d');
+            charts.monthly = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.map(d => d.month_year),
+                    datasets: [{
+                        label: 'Customers', type: 'bar',
+                        data: data.map(d => d.count),
+                        backgroundColor: 'rgba(91,156,246,.5)',
+                        borderRadius: 5, yAxisID: 'y'
+                    }, {
+                        label: 'Revenue (KES)', type: 'line',
+                        data: data.map(d => d.revenue),
+                        borderColor: '#c9a84c', borderWidth: 2,
+                        pointRadius: 4, pointBackgroundColor: '#c9a84c',
+                        fill: false, tension: .4, yAxisID: 'y1'
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#9ca3af' } } },
+                    scales: {
+                        x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
+                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
+                        y1: { position: 'right', ticks: { color: '#c9a84c' }, grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+        }
+
+        /* ─── BAGS PERFORMANCE ──────────────────────────── */
+        async function loadBags() {
+            const d = await api('/api/bags-performance');
+            const el = document.getElementById('bags-section');
+
+            if (d.message) {
+                el.innerHTML = `<p style="color:var(--muted);padding:20px">${d.message}</p>`;
+                return;
+            }
+
+            el.innerHTML = `
+    <div class="bag-kpis">
+      <div class="bag-kpi"><div class="lbl">Total Bag Sales</div><div class="val" style="color:var(--gold)">${d.total_bags.toLocaleString()}</div></div>
+      <div class="bag-kpi"><div class="lbl">Bag Revenue</div><div class="val" style="color:var(--teal)">KES ${d.bag_revenue.toLocaleString()}</div></div>
+      <div class="bag-kpi"><div class="lbl">Avg Bag Price</div><div class="val">KES ${d.avg_bag_price.toLocaleString()}</div></div>
+      <div class="bag-kpi"><div class="lbl">Female Buyers</div><div class="val" style="color:var(--rose)">${d.female_buyers.toLocaleString()}</div></div>
+      <div class="bag-kpi"><div class="lbl">Male Buyers</div><div class="val" style="color:var(--blue)">${d.male_buyers.toLocaleString()}</div></div>
+    </div>
+    <div class="charts-grid two-col">
+      <div class="table-card">
+        <h3>Bag Products Breakdown</h3>
+        <table>
+          <thead><tr><th>Product</th><th>Count</th><th>%</th></tr></thead>
+          <tbody>
+            ${d.bag_names.map((r, i) => `<tr>
+              <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${PALETTE[i % PALETTE.length]};margin-right:8px"></span>${r.product}</td>
+              <td class="num">${r.count}</td>
+              <td class="num">${r.percentage}%</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="chart-card">
+        <h3>Top Bag Colors</h3>
+        <div class="chart-wrap short"><canvas id="bagColorChart"></canvas></div>
+      </div>
+    </div>`;
+
+            destroyChart('bagColor');
+            const ctx = document.getElementById('bagColorChart').getContext('2d');
+            charts.bagColor = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: d.top_colors.map(c => c.color),
+                    datasets: [{
+                        data: d.top_colors.map(c => c.count),
+                        backgroundColor: d.top_colors.map((_, i) => PALETTE[i % PALETTE.length]),
+                        borderRadius: 5
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
+                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }
+                    }
+                }
+            });
+        }
+
+        /* ─── INSIGHTS ──────────────────────────────────── */
+        let _metrics = null, _colors = null, _locs = null, _products = null, _bags = null;
+
+        async function buildInsights() {
+            try {
+                [_metrics, _colors, _locs, _products, _bags] = await Promise.all([
+                    api('/api/key-metrics'), api('/api/color-analysis'),
+                    api('/api/location-analysis'), api('/api/product-analysis'),
+                    api('/api/bags-performance'),
+                ]);
+            } catch (e) { return; }
+
+            const insights = [];
+
+            // Gender insight
+            if (_metrics.female_pct > 55)
+                insights.push({ color: 'rose', title: 'Female-Dominant Market', text: `${_metrics.female_pct}% of customers are female. Marketing campaigns should strongly prioritise female-oriented messaging, aesthetics, and influencer partnerships.` });
+            else if (_metrics.male_pct > 55)
+                insights.push({ color: 'blue', title: 'Male-Dominant Market', text: `${_metrics.male_pct}% of customers are male. Consider expanding female-targeted product lines to capture an underserved segment.` });
+            else
+                insights.push({ color: 'teal', title: 'Balanced Gender Mix', text: `Customers are nearly even at ${_metrics.female_pct}% female / ${_metrics.male_pct}% male — a strong base for broad product diversification.` });
+
+            // Top color insight
+            if (_colors.length) {
+                const top = _colors[0];
+                insights.push({ color: 'gold', title: `Top Colour: ${top.color}`, text: `"${top.color}" leads colour preference at ${top.percentage}% of all purchases. Prioritise restocking and launching new variants in this colour to maximise sell-through.` });
+            }
+
+            // Location insight
+            if (_locs.length) {
+                const top = _locs[0];
+                insights.push({ color: 'teal', title: `Best Performing Location`, text: `"${top.shop}" accounts for ${top.percentage}% of total customers${top.revenue ? ` and KES ${top.revenue.toLocaleString()} in revenue` : ''}. Consider allocating more inventory and staff to this location.` });
+                if (_locs.length > 1) {
+                    const low = _locs[_locs.length - 1];
+                    insights.push({ color: 'rose', title: `Underperforming Location`, text: `"${low.shop}" has the lowest traffic at ${low.percentage}%. Investigate whether this is a visibility, stock, or staffing issue and run a local promotion to drive footfall.` });
+                }
+            }
+
+            // Bags insight
+            if (_bags && !_bags.message) {
+                insights.push({ color: 'purple', title: 'Bags Category Performance', text: `Bags drove ${_bags.total_bags.toLocaleString()} sales worth KES ${_bags.bag_revenue.toLocaleString()}. Female buyers make up ${Math.round(_bags.female_buyers / (_bags.female_buyers + _bags.male_buyers) * 100)}% of bag purchasers — a strong indicator to expand the handbag and tote range.` });
+                if (_bags.top_colors.length)
+                    insights.push({ color: 'gold', title: 'Hottest Bag Colour', text: `"${_bags.top_colors[0].color}" is the most popular colour for bags. Ensure this colour is consistently available across all bag styles and locations to avoid lost sales.` });
+            }
+
+            // Revenue insight
+            if (_metrics.total_revenue)
+                insights.push({ color: 'blue', title: 'Revenue Opportunity', text: `Average price per item stands at KES ${_metrics.avg_price.toLocaleString()}. Introducing a premium tier or bundle offers could increase basket size without adding new customer acquisition costs.` });
+
+            // Location diversity
+            insights.push({ color: 'teal', title: 'Geographic Coverage', text: `Products are sold across ${_metrics.unique_locations} unique locations. Expanding to untapped areas or online channels could meaningfully grow the total addressable market.` });
+
+            // Product insight
+            if (_products.length)
+                insights.push({ color: 'gold', title: `Best-Selling Product`, text: `"${_products[0].product}" leads product sales at ${_products[0].percentage}% of transactions. Consider creating product bundles anchored to this item to boost cross-sell rates.` });
+
+            const grid = document.getElementById('insights-grid');
+            grid.innerHTML = insights.map(ins => `
+    <div class="insight-card ${ins.color}">
+      <h4>${ins.title}</h4>
+      <p>${ins.text}</p>
+    </div>`).join('');
+        }
+
+        /* ─── FILTER ─────────────────────────────────────── */
+        async function initFilter() {
+            try {
+                const [products, monthly] = await Promise.all([
+                    api('/api/product-list'), api('/api/monthly-trend')
+                ]);
+
+                const sel = document.getElementById('filter-product');
+                products.forEach(p => {
+                    const o = document.createElement('option');
+                    o.value = p; o.textContent = p;
+                    sel.appendChild(o);
+                });
+
+                const startInput = document.getElementById('filter-start');
+                const endInput = document.getElementById('filter-end');
+
+                function toISO(d) { return d.toISOString().slice(0,10); }
+
+                if (monthly && monthly.length) {
+                    // monthly entries expected to have `month_year` like "Apr 2026"
+                    const dates = monthly.map(m => {
+                        const my = m.month_year || m.Month || m.month;
+                        const parsed = new Date('1 ' + my);
+                        return isNaN(parsed) ? null : parsed;
+                    }).filter(Boolean).sort((a,b)=>a-b);
+
+                    if (dates.length) {
+                        const first = new Date(dates[0].getFullYear(), dates[0].getMonth(), 1);
+                        const last = new Date(dates[dates.length-1].getFullYear(), dates[dates.length-1].getMonth()+1, 0);
+                        startInput.min = toISO(first);
+                        startInput.max = toISO(last);
+                        endInput.min = toISO(first);
+                        endInput.max = toISO(last);
+                        if (!startInput.value) startInput.value = toISO(first);
+                        if (!endInput.value) endInput.value = toISO(last);
+                        return;
+                    }
+                }
+
+                // Fallback: set to last 12 months
+                const now = new Date();
+                const prev = new Date(now); prev.setFullYear(now.getFullYear()-1);
+                startInput.min = toISO(prev);
+                startInput.max = toISO(now);
+                endInput.min = toISO(prev);
+                endInput.max = toISO(now);
+                if (!startInput.value) startInput.value = toISO(prev);
+                if (!endInput.value) endInput.value = toISO(now);
+
+            } catch(e) { console.warn('Filter init failed', e); }
+        }
+
+        async function applyFilter() {
+            const product = document.getElementById('filter-product').value;
+            const start   = document.getElementById('filter-start').value;
+            const end     = document.getElementById('filter-end').value;
+            const params  = new URLSearchParams();
+            if (product) params.set('product', product);
+            if (start)   params.set('start', start);
+            if (end)     params.set('end', end);
+
+            const el = document.getElementById('filter-results');
+            el.innerHTML = '<div class="loader"><div class="spinner"></div> Loading&hellip;</div>';
+
+            try {
+                const d = await api('/api/bag-filter?' + params.toString());
+                if (d.message) { el.innerHTML = `<p style="color:var(--muted);padding:16px">${d.message}</p>`; return; }
+
+                const label = [product || 'All Products', start ? 'from ' + start : '', end ? 'to ' + end : ''].filter(Boolean).join(' ');
+
+                el.innerHTML = `
+                <div class="filter-stats-grid">
+                    <div class="filter-stat"><div class="lbl">Units Sold</div><div class="val" style="color:var(--gold)">${d.total.toLocaleString()}</div></div>
+                    <div class="filter-stat"><div class="lbl">Revenue</div><div class="val" style="color:var(--teal)">KES ${d.revenue.toLocaleString()}</div></div>
+                    <div class="filter-stat"><div class="lbl">Avg. Price</div><div class="val">KES ${d.avg_price.toLocaleString()}</div></div>
+                    <div class="filter-stat"><div class="lbl">Female Buyers</div><div class="val" style="color:var(--rose)">${d.female_buyers.toLocaleString()}</div></div>
+                    <div class="filter-stat"><div class="lbl">Male Buyers</div><div class="val" style="color:var(--blue)">${d.male_buyers.toLocaleString()}</div></div>
+                </div>
+                <div class="charts-grid two-col">
+                    <div class="chart-card">
+                        <h3>Weekly Sales &mdash; ${label}</h3>
+                        <div class="chart-wrap tall"><canvas id="filterWeeklyChart"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Top Colours</h3>
+                        <div class="chart-wrap tall"><canvas id="filterColorChart"></canvas></div>
+                    </div>
+                </div>`;
+
+                destroyChart('filterWeekly');
+                if (d.weekly_trend && d.weekly_trend.length) {
+                    charts.filterWeekly = new Chart(
+                        document.getElementById('filterWeeklyChart').getContext('2d'), {
+                        type: 'line',
+                        data: {
+                            labels: d.weekly_trend.map(w => w.Week),
+                            datasets: [{
+                                label: 'Units', data: d.weekly_trend.map(w => w.count),
+                                borderColor: '#c9a84c', backgroundColor: 'rgba(201,168,76,.12)',
+                                borderWidth: 2, pointRadius: 4, fill: true, tension: .4
+                            },{
+                                label: 'Revenue (KES)', data: d.weekly_trend.map(w => w.revenue),
+                                borderColor: '#3ecfb2', backgroundColor: 'rgba(62,207,178,.08)',
+                                borderWidth: 2, pointRadius: 3, fill: true, tension: .4, yAxisID: 'y1'
+                            }]
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            plugins: { legend: { labels: { color: '#9ca3af', font: { size: 11 } } } },
+                            scales: {
+                                x:  { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
+                                y:  { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
+                                y1: { position: 'right', ticks: { color: '#3ecfb2' }, grid: { drawOnChartArea: false } }
+                            }
+                        }
+                    });
+                }
+
+                destroyChart('filterColor');
+                if (d.top_colors && d.top_colors.length) {
+                    charts.filterColor = new Chart(
+                        document.getElementById('filterColorChart').getContext('2d'), {
+                        type: 'doughnut',
+                        data: {
+                            labels: d.top_colors.map(c => c.color),
+                            datasets: [{ data: d.top_colors.map(c => c.count),
+                                backgroundColor: d.top_colors.map((_,i) => PALETTE[i % PALETTE.length]),
+                                borderWidth: 0, hoverOffset: 6 }]
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false, cutout: '60%',
+                            plugins: { legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 11 }, boxWidth: 12 } } }
+                        }
+                    });
+                }
+            } catch(e) {
+                el.innerHTML = `<p style="color:var(--rose);padding:16px">Error: ${e.message}</p>`;
+            }
+        }
+
+        /* ─── INIT ──────────────────────────────────────── */
+        loadAll();
+        initFilter();
+    </script>
+
+</html>
