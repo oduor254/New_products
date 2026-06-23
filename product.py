@@ -75,9 +75,10 @@ def get_dataframe(retries: int = 3):
         # Let pandas infer formats (defaults to month-first which matches the sheet's MM/DD/YYYY format)
         df["Date"] = pd.to_datetime(df["Date"], dayfirst=False, errors="coerce")
 
-    # --- Numeric price ---
-    if "Price" in df.columns:
-        df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
+    # --- Numeric columns ---
+    for col in ["Price", "Quantity", "Total"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # --- Strip string columns ---
     for col in ["Gender", "Color", "Location", "Product", "Category"]:
@@ -104,8 +105,9 @@ def key_metrics():
     male_pct     = round((male   / total * 100), 1) if total else 0
     unique_locs  = int(df["Location"].nunique()) if "Location" in df.columns else 0
 
-    total_revenue = round(float(df["Price"].sum()), 2) if "Price" in df.columns else 0
-    avg_price     = round(float(df["Price"].mean()), 2) if "Price" in df.columns else 0
+    total_revenue  = round(float(df["Total"].sum()), 2)    if "Total"    in df.columns else 0
+    total_units    = int(df["Quantity"].sum())              if "Quantity" in df.columns else total
+    avg_price      = round(float(df["Price"].mean()), 2)   if "Price"    in df.columns else 0
 
     # Date range
     if "Date" in df.columns and df["Date"].notna().any():
@@ -138,6 +140,7 @@ def key_metrics():
         "unique_locations": unique_locs,
         "date_range"      : date_range,
         "total_revenue"   : total_revenue,
+        "total_units"     : total_units,
         "avg_price"       : avg_price,
         "top_product"     : top_product,
         "top_category"    : top_category,
@@ -165,8 +168,8 @@ def location_analysis():
     counts["percentage"] = (counts["count"] / total * 100).round(1)
 
     # Revenue per location
-    if "Price" in df.columns:
-        rev = df.groupby("Location")["Price"].sum().reset_index()
+    if "Total" in df.columns:
+        rev = df.groupby("Location")["Total"].sum().reset_index()
         rev.columns = ["shop", "revenue"]
         counts = counts.merge(rev, on="shop", how="left")
         counts["revenue"] = counts["revenue"].round(2)
@@ -190,7 +193,7 @@ def weekly_trend():
     count_col = next((c for c in ["First Name", "Name", "Customer"] if c in df.columns), df.columns[0])
     weekly = df.groupby("Week_Start").agg(
         count=(count_col, "count"),
-        revenue=("Price", "sum"),
+        revenue=("Total", "sum"),
     ).reset_index()
     
     # Sort chronologically, then create the string label
@@ -211,9 +214,11 @@ def product_analysis():
     counts.columns = ["product", "count"]
     counts["percentage"] = (counts["count"] / total * 100).round(1)
 
-    if "Price" in df.columns:
-        rev = df.groupby("Product")["Price"].agg(["sum", "mean"]).reset_index()
-        rev.columns = ["product", "total_revenue", "avg_price"]
+    if "Total" in df.columns:
+        rev = df.groupby("Product").agg(
+            total_revenue=("Total", "sum"),
+            avg_price=("Price", "mean"),
+        ).reset_index()
         rev["total_revenue"] = rev["total_revenue"].round(2)
         rev["avg_price"]     = rev["avg_price"].round(2)
         counts = counts.merge(rev, on="product", how="left")
@@ -234,7 +239,7 @@ def bags_performance():
         return jsonify({"message": "No bag products found", "data": []})
 
     total_bags      = int(len(bags_df))
-    bag_revenue     = round(float(bags_df["Price"].sum()), 2) if "Price" in bags_df.columns else 0
+    bag_revenue     = round(float(bags_df["Total"].sum()), 2)  if "Total" in bags_df.columns else 0
     avg_bag_price   = round(float(bags_df["Price"].mean()), 2) if "Price" in bags_df.columns else 0
 
     # Gender split for bags
@@ -282,8 +287,8 @@ def category_analysis():
     counts.columns = ["category", "count"]
     counts["percentage"] = (counts["count"] / total * 100).round(1)
 
-    if "Price" in df.columns:
-        rev = df.groupby("Category")["Price"].sum().reset_index()
+    if "Total" in df.columns:
+        rev = df.groupby("Category")["Total"].sum().reset_index()
         rev.columns = ["category", "revenue"]
         rev["revenue"] = rev["revenue"].round(2)
         counts = counts.merge(rev, on="category", how="left")
@@ -299,7 +304,7 @@ def monthly_trend():
         return jsonify([])
     monthly = df.groupby("Month-Year").agg(
         count=("First Name", "count"),
-        revenue=("Price", "sum"),
+        revenue=("Total", "sum"),
     ).reset_index()
     monthly.columns = ["month_year", "count", "revenue"]
     monthly["revenue"] = monthly["revenue"].round(2)
@@ -350,8 +355,9 @@ def bag_filter():
         return jsonify({"message": "No data found for the selected filters."})
 
     total     = int(len(df))
-    revenue   = round(float(df["Price"].sum()), 2)  if "Price" in df.columns else 0
-    avg_price = round(float(df["Price"].mean()), 2) if "Price" in df.columns else 0
+    revenue   = round(float(df["Total"].sum()), 2)  if "Total"    in df.columns else 0
+    avg_price = round(float(df["Price"].mean()), 2) if "Price"    in df.columns else 0
+    units     = int(df["Quantity"].sum())            if "Quantity" in df.columns else total
     female    = int((df["Gender"].str.lower() == "female").sum())
     male      = int((df["Gender"].str.lower() == "male").sum())
 
@@ -377,7 +383,7 @@ def bag_filter():
         count_col = next((c for c in ["First Name", "Name", "Customer"] if c in d.columns), d.columns[0])
         w = d.groupby("Week_Start").agg(
             count=(count_col, "count"),
-            revenue=("Price", "sum"),
+            revenue=("Total", "sum"),
         ).reset_index()
         w = w.sort_values("Week_Start")
         w["Week"] = w["Week_Start"].dt.strftime("%d %b '%y")
@@ -388,6 +394,7 @@ def bag_filter():
     return jsonify({
         "product"       : product or "All Products",
         "total"         : total,
+        "units"         : units,
         "revenue"       : revenue,
         "avg_price"     : avg_price,
         "female_buyers" : female,

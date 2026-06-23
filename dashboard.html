@@ -735,9 +735,10 @@
     ${card('Male Customers', d.male_customers.toLocaleString(), `${d.male_pct}% of total`, '♂️', 'accent-blue')}
     ${card('Unique Locations', d.unique_locations, 'shops / regions', '📍', 'accent-teal')}
     ${card('Total Revenue', 'KES ' + d.total_revenue.toLocaleString(), 'across all sales', '💰', 'accent-gold')}
-    ${card('Avg. Price', 'KES ' + d.avg_price.toLocaleString(), 'per item', '🏷️', '')}
+    ${card('Units Sold', (d.total_units||0).toLocaleString(), 'total quantity', '📦', 'accent-teal')}
+    ${card('Avg. Unit Price', 'KES ' + d.avg_price.toLocaleString(), 'per item', '🏷️', '')}
     ${card('Top Product', d.top_product, 'best seller', '🥇', 'accent-teal')}
-    ${card('Top Category', d.top_category, 'most popular', '📦', '')}
+    ${card('Top Category', d.top_category, 'most popular', '🗂️', '')}
   `;
         }
 
@@ -1178,9 +1179,10 @@
 
                 el.innerHTML = `
                 <div class="filter-stats-grid">
-                    <div class="filter-stat"><div class="lbl">Units Sold</div><div class="val" style="color:var(--gold)">${d.total.toLocaleString()}</div></div>
+                    <div class="filter-stat"><div class="lbl">Transactions</div><div class="val" style="color:var(--gold)">${d.total.toLocaleString()}</div></div>
+                    <div class="filter-stat"><div class="lbl">Units Sold</div><div class="val" style="color:var(--purple)">${(d.units||0).toLocaleString()}</div></div>
                     <div class="filter-stat"><div class="lbl">Revenue</div><div class="val" style="color:var(--teal)">KES ${d.revenue.toLocaleString()}</div></div>
-                    <div class="filter-stat"><div class="lbl">Avg. Price</div><div class="val">KES ${d.avg_price.toLocaleString()}</div></div>
+                    <div class="filter-stat"><div class="lbl">Avg. Unit Price</div><div class="val">KES ${d.avg_price.toLocaleString()}</div></div>
                     <div class="filter-stat"><div class="lbl">Female Buyers</div><div class="val" style="color:var(--rose)">${d.female_buyers.toLocaleString()}</div></div>
                     <div class="filter-stat"><div class="lbl">Male Buyers</div><div class="val" style="color:var(--blue)">${d.male_buyers.toLocaleString()}</div></div>
                 </div>
