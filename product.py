@@ -1,7 +1,7 @@
 # ── Fix: PostgreSQL sets REQUESTS_CA_BUNDLE to its own (wrong) path,
 #    which breaks every HTTPS call made by gspread / google-auth.
 #    Override it here before any network library is imported.
-import os, certifi, json
+import os, certifi, json, time
 from dotenv import load_dotenv
 load_dotenv()  # loads .env in local dev; no-op on Vercel
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
@@ -22,8 +22,9 @@ app = Flask(__name__, static_folder=BASE_DIR)
 # Local dev fallback — ignored on Vercel (use GOOGLE_CREDENTIALS_JSON env var instead)
 JSON_KEY_PATH  = r"C:\Users\Oduor\Downloads\JSON Files\retention-484110-9e4520124486.json"
 
-SPREADSHEET_ID = "1QOlKAXwkKoD-neLG2MUWh6aUHcNnbnwWYhhhVa1rhcs"
-WORKSHEET_NAME = "Shops"
+# Allow overriding via env vars (Vercel → Settings → Environment Variables)
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1QOlKAXwkKoD-neLG2MUWh6aUHcNnbnwWYhhhVa1rhcs")
+WORKSHEET_NAME = os.environ.get("WORKSHEET_NAME", "Shops")
 
 # Only these products are considered "new" — all other rows are excluded
 NEW_PRODUCTS = {
@@ -42,16 +43,21 @@ SCOPES = [
 ]
 
 def _get_credentials():
-    """Return credentials from env var (Vercel) or local JSON file (dev)."""
     raw = os.environ.get("GOOGLE_CREDENTIALS_JSON")
     if raw:
         return Credentials.from_service_account_info(json.loads(raw), scopes=SCOPES)
     return Credentials.from_service_account_file(JSON_KEY_PATH, scopes=SCOPES)
 
 
-def get_dataframe(retries: int = 3):
+# ── In-memory cache (survives warm Vercel invocations; TTL = 5 min) ──────────
+_cache: dict = {"df": None, "ts": 0.0}
+CACHE_TTL = 300  # seconds
+
+
+def _fetch_fresh() -> pd.DataFrame:
+    """Fetch from Google Sheets and return a cleaned DataFrame."""
     last_err = None
-    for attempt in range(retries):
+    for attempt in range(3):
         try:
             creds  = _get_credentials()
             client = gspread.authorize(creds)
@@ -60,37 +66,38 @@ def get_dataframe(retries: int = 3):
             break
         except Exception as e:
             last_err = e
-            if attempt < retries - 1:
-                import time; time.sleep(2 ** attempt)  # exponential back-off
+            if attempt < 2:
+                time.sleep(2 ** attempt)
             else:
                 raise last_err
 
     df = pd.DataFrame(data)
-
-    # --- Normalise column names (strip whitespace) ---
     df.columns = df.columns.str.strip()
 
-    # --- Date parsing (support mixed day/month order) ---
     if "Date" in df.columns:
-        # Let pandas infer formats (defaults to month-first which matches the sheet's MM/DD/YYYY format)
         df["Date"] = pd.to_datetime(df["Date"], dayfirst=False, errors="coerce")
 
-    # --- Numeric columns ---
     for col in ["Price", "Quantity", "Total"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # --- Strip string columns ---
     for col in ["Gender", "Color", "Location", "Product", "Category"]:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip().str.title()
 
-    # --- Keep only new products ---
     if "Product" in df.columns:
         new_products_title = {p.title() for p in NEW_PRODUCTS}
         df = df[df["Product"].isin(new_products_title)].reset_index(drop=True)
 
     return df
+
+
+def get_dataframe() -> pd.DataFrame:
+    """Return cached DataFrame, refreshing from Google Sheets if TTL expired."""
+    if _cache["df"] is None or (time.time() - _cache["ts"]) > CACHE_TTL:
+        _cache["df"] = _fetch_fresh()
+        _cache["ts"] = time.time()
+    return _cache["df"]
 
 
 # ─── KEY METRICS ──────────────────────────────────────────────────────────────
