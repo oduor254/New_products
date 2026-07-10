@@ -162,6 +162,7 @@ def dashboard_data():
     prod_counts["percentage"] = (prod_counts["count"] / total * 100).round(1)
     if "Total" in df.columns:
         pr = df.groupby("Product").agg(total_revenue=("Total", "sum"), avg_price=("Price", "mean")).reset_index()
+        pr = pr.rename(columns={"Product": "product"})
         pr["total_revenue"] = pr["total_revenue"].round(2)
         pr["avg_price"]     = pr["avg_price"].round(2)
         prod_counts = prod_counts.merge(pr, on="product", how="left")
