@@ -700,23 +700,25 @@
             return r.json();
         }
 
-        /* ─── LOAD ALL ──────────────────────────────────── */
+        /* ─── LOAD ALL (single fetch) ───────────────────── */
+        let _dash = null; // cached dashboard payload
+
         async function loadAll() {
             document.getElementById('refresh-btn').textContent = '⏳ Loading…';
             try {
-                await Promise.all([
-                    loadMetrics(),
-                    loadWeekly(),
-                    loadColors(),
-                    loadLocations(),
-                    loadProducts(),
-                    loadCategories(),
-                    loadMonthly(),
-                    loadBags(),
-                ]);
+                _dash = await api('/api/dashboard-data');
+                renderMetrics(_dash.metrics);
+                renderWeekly(_dash.weekly, _dash.metrics);
+                renderColors(_dash.colors);
+                renderLocations(_dash.locations);
+                renderProducts(_dash.products);
+                renderCategories(_dash.categories);
+                renderMonthly(_dash.monthly);
+                renderBags(_dash.bags);
+                initFilterFromDash(_dash);
+                buildInsights(_dash);
             } catch (e) {
                 console.error(e);
-                // Fetch health check for a meaningful error message
                 try {
                     const h = await fetch('/api/health');
                     const hj = await h.json();
@@ -726,17 +728,13 @@
                 }
             }
             document.getElementById('refresh-btn').textContent = '↻ Refresh';
-            buildInsights();
         }
 
         /* ─── KEY METRICS ───────────────────────────────── */
-        async function loadMetrics() {
-            const d = await api('/api/key-metrics');
+        function renderMetrics(d) {
             document.getElementById('date-range-badge').textContent = d.date_range;
             document.getElementById('total-badge').textContent = `${d.total_customers.toLocaleString()} customers`;
-
-            const grid = document.getElementById('metrics-grid');
-            grid.innerHTML = `
+            document.getElementById('metrics-grid').innerHTML = `
     ${card('Total Customers', d.total_customers.toLocaleString(), d.date_range, '👥', 'accent-gold')}
     ${card('Female Customers', d.female_customers.toLocaleString(), `${d.female_pct}% of total`, '♀️', 'accent-rose')}
     ${card('Male Customers', d.male_customers.toLocaleString(), `${d.male_pct}% of total`, '♂️', 'accent-blue')}
@@ -745,8 +743,7 @@
     ${card('Units Sold', (d.total_units||0).toLocaleString(), 'total quantity', '📦', 'accent-teal')}
     ${card('Avg. Unit Price', 'KES ' + d.avg_price.toLocaleString(), 'per item', '🏷️', '')}
     ${card('Top Product', d.top_product, 'best seller', '🥇', 'accent-teal')}
-    ${card('Top Category', d.top_category, 'most popular', '🗂️', '')}
-  `;
+    ${card('Top Category', d.top_category, 'most popular', '🗂️', '')}`;
         }
 
         function card(label, value, sub, icon, accent) {
@@ -758,33 +755,22 @@
         }
 
         /* ─── WEEKLY TREND + GENDER ─────────────────────── */
-        async function loadWeekly() {
-            const [weekly, metrics] = await Promise.all([api('/api/weekly-trend'), api('/api/key-metrics')]);
-
+        function renderWeekly(weekly, metrics) {
             destroyChart('weekly'); destroyChart('gender');
-
-            // Weekly line chart
             const wCtx = document.getElementById('weeklyChart').getContext('2d');
             charts.weekly = new Chart(wCtx, {
                 type: 'line',
                 data: {
                     labels: weekly.map(w => w.Week),
                     datasets: [{
-                        label: 'Customers',
-                        data: weekly.map(w => w.count),
-                        borderColor: '#c9a84c',
-                        backgroundColor: 'rgba(201,168,76,.12)',
-                        borderWidth: 2, pointRadius: 4,
-                        pointBackgroundColor: '#c9a84c',
+                        label: 'Customers', data: weekly.map(w => w.count),
+                        borderColor: '#c9a84c', backgroundColor: 'rgba(201,168,76,.12)',
+                        borderWidth: 2, pointRadius: 4, pointBackgroundColor: '#c9a84c',
                         fill: true, tension: .4,
                     }, {
-                        label: 'Revenue (KES)',
-                        data: weekly.map(w => w.revenue),
-                        borderColor: '#3ecfb2',
-                        backgroundColor: 'rgba(62,207,178,.08)',
-                        borderWidth: 2, pointRadius: 3,
-                        fill: true, tension: .4,
-                        yAxisID: 'y1',
+                        label: 'Revenue (KES)', data: weekly.map(w => w.revenue),
+                        borderColor: '#3ecfb2', backgroundColor: 'rgba(62,207,178,.08)',
+                        borderWidth: 2, pointRadius: 3, fill: true, tension: .4, yAxisID: 'y1',
                     }]
                 },
                 options: {
@@ -797,373 +783,159 @@
                     }
                 }
             });
-
-            // Gender doughnut
             const gCtx = document.getElementById('genderChart').getContext('2d');
             charts.gender = new Chart(gCtx, {
                 type: 'doughnut',
                 data: {
                     labels: ['Female', 'Male'],
-                    datasets: [{
-                        data: [metrics.female_customers, metrics.male_customers],
-                        backgroundColor: ['#e8637a', '#5b9cf6'], borderWidth: 0,
-                        hoverOffset: 6
-                    }]
+                    datasets: [{ data: [metrics.female_customers, metrics.male_customers], backgroundColor: ['#e8637a', '#5b9cf6'], borderWidth: 0, hoverOffset: 6 }]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false, cutout: '68%',
                     plugins: {
                         legend: { position: 'bottom', labels: { color: '#9ca3af', padding: 14 } },
-                        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw.toLocaleString()} (${((ctx.raw / (metrics.female_customers + metrics.male_customers)) * 100).toFixed(1)}%)` } }
+                        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw.toLocaleString()} (${((ctx.raw/(metrics.female_customers+metrics.male_customers))*100).toFixed(1)}%)` } }
                     }
                 }
             });
         }
 
         /* ─── COLOR ANALYSIS ────────────────────────────── */
-        async function loadColors() {
-            const data = await api('/api/color-analysis');
+        function renderColors(data) {
             destroyChart('colorBar');
-
-            const cCtx = document.getElementById('colorBarChart').getContext('2d');
-            charts.colorBar = new Chart(cCtx, {
+            charts.colorBar = new Chart(document.getElementById('colorBarChart').getContext('2d'), {
                 type: 'bar',
-                data: {
-                    labels: data.map(d => d.color),
-                    datasets: [{
-                        label: 'Count', data: data.map(d => d.count),
-                        backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length]),
-                        borderRadius: 6, borderSkipped: false
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
-                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }
-                    }
-                }
+                data: { labels: data.map(d => d.color), datasets: [{ label: 'Count', data: data.map(d => d.count), backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length]), borderRadius: 6, borderSkipped: false }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }, y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } } } }
             });
-
             const max = Math.max(...data.map(d => d.count));
-            document.getElementById('color-table').innerHTML = `
-    <table>
-      <thead><tr><th>Color</th><th>Count</th><th>%</th><th>Share</th></tr></thead>
-      <tbody>
-        ${data.map((r, i) => `<tr>
-          <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${PALETTE[i % PALETTE.length]};margin-right:8px;"></span>${r.color}</td>
-          <td class="num">${r.count.toLocaleString()}</td>
-          <td class="num">${r.percentage}%</td>
-          <td><div class="pct-bar-wrap"><div class="pct-bar" style="width:${Math.round(r.count / max * 120)}px;background:${PALETTE[i % PALETTE.length]}"></div></div></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+            document.getElementById('color-table').innerHTML = `<table><thead><tr><th>Color</th><th>Count</th><th>%</th><th>Share</th></tr></thead><tbody>${data.map((r,i)=>`<tr><td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${PALETTE[i%PALETTE.length]};margin-right:8px"></span>${r.color}</td><td class="num">${r.count.toLocaleString()}</td><td class="num">${r.percentage}%</td><td><div class="pct-bar-wrap"><div class="pct-bar" style="width:${Math.round(r.count/max*120)}px;background:${PALETTE[i%PALETTE.length]}"></div></div></td></tr>`).join('')}</tbody></table>`;
         }
 
         /* ─── LOCATION ANALYSIS ─────────────────────────── */
-        async function loadLocations() {
-            const data = await api('/api/location-analysis');
+        function renderLocations(data) {
             destroyChart('location');
-
-            const lCtx = document.getElementById('locationChart').getContext('2d');
-            charts.location = new Chart(lCtx, {
+            charts.location = new Chart(document.getElementById('locationChart').getContext('2d'), {
                 type: 'bar',
-                data: {
-                    labels: data.map(d => d.shop),
-                    datasets: [{
-                        label: 'Revenue (KES)',
-                        data: data.map(d => d.revenue || 0),
-                        backgroundColor: 'rgba(62,207,178,.7)',
-                        borderRadius: 6
-                    }]
-                },
-                options: {
-                    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
-                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }
-                    }
-                }
+                data: { labels: data.map(d => d.shop), datasets: [{ label: 'Revenue (KES)', data: data.map(d => d.revenue || 0), backgroundColor: 'rgba(62,207,178,.7)', borderRadius: 6 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }, y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } } } }
             });
-
             const max = Math.max(...data.map(d => d.count));
-            document.getElementById('location-table').innerHTML = `
-    <table>
-      <thead><tr><th>Shop / Location</th><th>Count</th><th>%</th><th>Revenue</th></tr></thead>
-      <tbody>
-        ${data.map((r, i) => `<tr>
-          <td>${r.shop}</td>
-          <td class="num">${r.count.toLocaleString()}</td>
-          <td class="num">
-            <div class="pct-bar-wrap">
-              ${r.percentage}%
-              <div class="pct-bar" style="width:${Math.round(r.count / max * 80)}px"></div>
-            </div>
-          </td>
-          <td class="num" style="color:var(--teal)">${r.revenue ? 'KES ' + r.revenue.toLocaleString() : '—'}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+            document.getElementById('location-table').innerHTML = `<table><thead><tr><th>Shop / Location</th><th>Count</th><th>%</th><th>Revenue</th></tr></thead><tbody>${data.map((r,i)=>`<tr><td>${r.shop}</td><td class="num">${r.count.toLocaleString()}</td><td class="num"><div class="pct-bar-wrap">${r.percentage}%<div class="pct-bar" style="width:${Math.round(r.count/max*80)}px"></div></div></td><td class="num" style="color:var(--teal)">${r.revenue?'KES '+r.revenue.toLocaleString():'—'}</td></tr>`).join('')}</tbody></table>`;
         }
 
         /* ─── PRODUCT ANALYSIS ──────────────────────────── */
-        async function loadProducts() {
-            const data = await api('/api/product-analysis');
+        function renderProducts(data) {
             destroyChart('product');
-            const ctx = document.getElementById('productChart').getContext('2d');
-            charts.product = new Chart(ctx, {
+            charts.product = new Chart(document.getElementById('productChart').getContext('2d'), {
                 type: 'doughnut',
-                data: {
-                    labels: data.map(d => d.product),
-                    datasets: [{
-                        data: data.map(d => d.count),
-                        backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length]),
-                        borderWidth: 0, hoverOffset: 6
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false, cutout: '55%',
-                    plugins: { legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 11 }, boxWidth: 12 } } }
-                }
+                data: { labels: data.map(d => d.product), datasets: [{ data: data.map(d => d.count), backgroundColor: data.map((_,i) => PALETTE[i%PALETTE.length]), borderWidth: 0, hoverOffset: 6 }] },
+                options: { responsive: true, maintainAspectRatio: false, cutout: '55%', plugins: { legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 11 }, boxWidth: 12 } } } }
             });
         }
 
         /* ─── CATEGORY ANALYSIS ─────────────────────────── */
-        async function loadCategories() {
-            const data = await api('/api/category-analysis');
+        function renderCategories(data) {
             destroyChart('category');
-            const ctx = document.getElementById('categoryChart').getContext('2d');
-            charts.category = new Chart(ctx, {
+            charts.category = new Chart(document.getElementById('categoryChart').getContext('2d'), {
                 type: 'polarArea',
-                data: {
-                    labels: data.map(d => d.category),
-                    datasets: [{
-                        data: data.map(d => d.count),
-                        backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length] + '99'),
-                        borderWidth: 0
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 11 }, boxWidth: 12 } } },
-                    scales: { r: { ticks: { color: '#7a8394', backdropColor: 'transparent' }, grid: { color: 'rgba(255,255,255,.06)' } } }
-                }
+                data: { labels: data.map(d => d.category), datasets: [{ data: data.map(d => d.count), backgroundColor: data.map((_,i) => PALETTE[i%PALETTE.length]+'99'), borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 11 }, boxWidth: 12 } } }, scales: { r: { ticks: { color: '#7a8394', backdropColor: 'transparent' }, grid: { color: 'rgba(255,255,255,.06)' } } } }
             });
         }
 
         /* ─── MONTHLY TREND ─────────────────────────────── */
-        async function loadMonthly() {
-            const data = await api('/api/monthly-trend');
+        function renderMonthly(data) {
             destroyChart('monthly');
             if (!data.length) return;
-            const ctx = document.getElementById('monthlyChart').getContext('2d');
-            charts.monthly = new Chart(ctx, {
+            charts.monthly = new Chart(document.getElementById('monthlyChart').getContext('2d'), {
                 type: 'bar',
-                data: {
-                    labels: data.map(d => d.month_year),
-                    datasets: [{
-                        label: 'Customers', type: 'bar',
-                        data: data.map(d => d.count),
-                        backgroundColor: 'rgba(91,156,246,.5)',
-                        borderRadius: 5, yAxisID: 'y'
-                    }, {
-                        label: 'Revenue (KES)', type: 'line',
-                        data: data.map(d => d.revenue),
-                        borderColor: '#c9a84c', borderWidth: 2,
-                        pointRadius: 4, pointBackgroundColor: '#c9a84c',
-                        fill: false, tension: .4, yAxisID: 'y1'
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#9ca3af' } } },
-                    scales: {
-                        x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
-                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
-                        y1: { position: 'right', ticks: { color: '#c9a84c' }, grid: { drawOnChartArea: false } }
-                    }
-                }
+                data: { labels: data.map(d => d.month_year), datasets: [{ label: 'Customers', type: 'bar', data: data.map(d => d.count), backgroundColor: 'rgba(91,156,246,.5)', borderRadius: 5, yAxisID: 'y' }, { label: 'Revenue (KES)', type: 'line', data: data.map(d => d.revenue), borderColor: '#c9a84c', borderWidth: 2, pointRadius: 4, pointBackgroundColor: '#c9a84c', fill: false, tension: .4, yAxisID: 'y1' }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#9ca3af' } } }, scales: { x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }, y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }, y1: { position: 'right', ticks: { color: '#c9a84c' }, grid: { drawOnChartArea: false } } } }
             });
         }
 
         /* ─── BAGS PERFORMANCE ──────────────────────────── */
-        async function loadBags() {
-            const d = await api('/api/bags-performance');
+        function renderBags(d) {
             const el = document.getElementById('bags-section');
-
-            if (d.message) {
-                el.innerHTML = `<p style="color:var(--muted);padding:20px">${d.message}</p>`;
-                return;
-            }
-
             el.innerHTML = `
     <div class="bag-kpis">
-      <div class="bag-kpi"><div class="lbl">Total Bag Sales</div><div class="val" style="color:var(--gold)">${d.total_bags.toLocaleString()}</div></div>
-      <div class="bag-kpi"><div class="lbl">Bag Revenue</div><div class="val" style="color:var(--teal)">KES ${d.bag_revenue.toLocaleString()}</div></div>
-      <div class="bag-kpi"><div class="lbl">Avg Bag Price</div><div class="val">KES ${d.avg_bag_price.toLocaleString()}</div></div>
+      <div class="bag-kpi"><div class="lbl">Total Sales</div><div class="val" style="color:var(--gold)">${d.total_bags.toLocaleString()}</div></div>
+      <div class="bag-kpi"><div class="lbl">Revenue</div><div class="val" style="color:var(--teal)">KES ${d.bag_revenue.toLocaleString()}</div></div>
+      <div class="bag-kpi"><div class="lbl">Avg Price</div><div class="val">KES ${d.avg_bag_price.toLocaleString()}</div></div>
       <div class="bag-kpi"><div class="lbl">Female Buyers</div><div class="val" style="color:var(--rose)">${d.female_buyers.toLocaleString()}</div></div>
       <div class="bag-kpi"><div class="lbl">Male Buyers</div><div class="val" style="color:var(--blue)">${d.male_buyers.toLocaleString()}</div></div>
     </div>
     <div class="charts-grid two-col">
-      <div class="table-card">
-        <h3>Bag Products Breakdown</h3>
-        <table>
-          <thead><tr><th>Product</th><th>Count</th><th>%</th></tr></thead>
-          <tbody>
-            ${d.bag_names.map((r, i) => `<tr>
-              <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${PALETTE[i % PALETTE.length]};margin-right:8px"></span>${r.product}</td>
-              <td class="num">${r.count}</td>
-              <td class="num">${r.percentage}%</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-      <div class="chart-card">
-        <h3>Top Bag Colors</h3>
-        <div class="chart-wrap short"><canvas id="bagColorChart"></canvas></div>
-      </div>
+      <div class="table-card"><h3>Products Breakdown</h3><table><thead><tr><th>Product</th><th>Count</th><th>%</th></tr></thead><tbody>${d.bag_names.map((r,i)=>`<tr><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${PALETTE[i%PALETTE.length]};margin-right:8px"></span>${r.product}</td><td class="num">${r.count}</td><td class="num">${r.percentage}%</td></tr>`).join('')}</tbody></table></div>
+      <div class="chart-card"><h3>Top Colors</h3><div class="chart-wrap short"><canvas id="bagColorChart"></canvas></div></div>
     </div>`;
-
             destroyChart('bagColor');
-            const ctx = document.getElementById('bagColorChart').getContext('2d');
-            charts.bagColor = new Chart(ctx, {
+            charts.bagColor = new Chart(document.getElementById('bagColorChart').getContext('2d'), {
                 type: 'bar',
-                data: {
-                    labels: d.top_colors.map(c => c.color),
-                    datasets: [{
-                        data: d.top_colors.map(c => c.count),
-                        backgroundColor: d.top_colors.map((_, i) => PALETTE[i % PALETTE.length]),
-                        borderRadius: 5
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } },
-                        y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }
-                    }
-                }
+                data: { labels: d.top_colors.map(c => c.color), datasets: [{ data: d.top_colors.map(c => c.count), backgroundColor: d.top_colors.map((_,i) => PALETTE[i%PALETTE.length]), borderRadius: 5 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } }, y: { ticks: { color: '#7a8394' }, grid: { color: 'rgba(255,255,255,.04)' } } } }
             });
         }
 
         /* ─── INSIGHTS ──────────────────────────────────── */
-        let _metrics = null, _colors = null, _locs = null, _products = null, _bags = null;
-
-        async function buildInsights() {
-            try {
-                [_metrics, _colors, _locs, _products, _bags] = await Promise.all([
-                    api('/api/key-metrics'), api('/api/color-analysis'),
-                    api('/api/location-analysis'), api('/api/product-analysis'),
-                    api('/api/bags-performance'),
-                ]);
-            } catch (e) { return; }
-
+        function buildInsights(dash) {
+            const m = dash.metrics, colors = dash.colors, locs = dash.locations, prods = dash.products, bags = dash.bags;
             const insights = [];
-
-            // Gender insight
-            if (_metrics.female_pct > 55)
-                insights.push({ color: 'rose', title: 'Female-Dominant Market', text: `${_metrics.female_pct}% of customers are female. Marketing campaigns should strongly prioritise female-oriented messaging, aesthetics, and influencer partnerships.` });
-            else if (_metrics.male_pct > 55)
-                insights.push({ color: 'blue', title: 'Male-Dominant Market', text: `${_metrics.male_pct}% of customers are male. Consider expanding female-targeted product lines to capture an underserved segment.` });
-            else
-                insights.push({ color: 'teal', title: 'Balanced Gender Mix', text: `Customers are nearly even at ${_metrics.female_pct}% female / ${_metrics.male_pct}% male — a strong base for broad product diversification.` });
-
-            // Top color insight
-            if (_colors.length) {
-                const top = _colors[0];
-                insights.push({ color: 'gold', title: `Top Colour: ${top.color}`, text: `"${top.color}" leads colour preference at ${top.percentage}% of all purchases. Prioritise restocking and launching new variants in this colour to maximise sell-through.` });
+            if (m.female_pct > 55) insights.push({ color: 'rose', title: 'Female-Dominant Market', text: `${m.female_pct}% of customers are female. Marketing campaigns should strongly prioritise female-oriented messaging, aesthetics, and influencer partnerships.` });
+            else if (m.male_pct > 55) insights.push({ color: 'blue', title: 'Male-Dominant Market', text: `${m.male_pct}% of customers are male. Consider expanding female-targeted product lines to capture an underserved segment.` });
+            else insights.push({ color: 'teal', title: 'Balanced Gender Mix', text: `Customers are nearly even at ${m.female_pct}% female / ${m.male_pct}% male — a strong base for broad product diversification.` });
+            if (colors.length) insights.push({ color: 'gold', title: `Top Colour: ${colors[0].color}`, text: `"${colors[0].color}" leads at ${colors[0].percentage}% of purchases. Prioritise restocking and launching new variants in this colour.` });
+            if (locs.length) {
+                insights.push({ color: 'teal', title: 'Best Performing Location', text: `"${locs[0].shop}" accounts for ${locs[0].percentage}% of customers${locs[0].revenue?' and KES '+locs[0].revenue.toLocaleString()+' in revenue':''}.` });
+                if (locs.length > 1) insights.push({ color: 'rose', title: 'Underperforming Location', text: `"${locs[locs.length-1].shop}" has the lowest traffic at ${locs[locs.length-1].percentage}%. Consider a local promotion to drive footfall.` });
             }
-
-            // Location insight
-            if (_locs.length) {
-                const top = _locs[0];
-                insights.push({ color: 'teal', title: `Best Performing Location`, text: `"${top.shop}" accounts for ${top.percentage}% of total customers${top.revenue ? ` and KES ${top.revenue.toLocaleString()} in revenue` : ''}. Consider allocating more inventory and staff to this location.` });
-                if (_locs.length > 1) {
-                    const low = _locs[_locs.length - 1];
-                    insights.push({ color: 'rose', title: `Underperforming Location`, text: `"${low.shop}" has the lowest traffic at ${low.percentage}%. Investigate whether this is a visibility, stock, or staffing issue and run a local promotion to drive footfall.` });
-                }
+            if (bags) {
+                insights.push({ color: 'purple', title: 'Products Performance', text: `Products drove ${bags.total_bags.toLocaleString()} sales worth KES ${bags.bag_revenue.toLocaleString()}. Female buyers make up ${Math.round(bags.female_buyers/(bags.female_buyers+bags.male_buyers)*100)}% of purchasers.` });
+                if (bags.top_colors.length) insights.push({ color: 'gold', title: 'Hottest Colour', text: `"${bags.top_colors[0].color}" is the most popular colour. Ensure consistent availability across all styles and locations.` });
             }
-
-            // Bags insight
-            if (_bags && !_bags.message) {
-                insights.push({ color: 'purple', title: 'Bags Category Performance', text: `Bags drove ${_bags.total_bags.toLocaleString()} sales worth KES ${_bags.bag_revenue.toLocaleString()}. Female buyers make up ${Math.round(_bags.female_buyers / (_bags.female_buyers + _bags.male_buyers) * 100)}% of bag purchasers — a strong indicator to expand the handbag and tote range.` });
-                if (_bags.top_colors.length)
-                    insights.push({ color: 'gold', title: 'Hottest Bag Colour', text: `"${_bags.top_colors[0].color}" is the most popular colour for bags. Ensure this colour is consistently available across all bag styles and locations to avoid lost sales.` });
-            }
-
-            // Revenue insight
-            if (_metrics.total_revenue)
-                insights.push({ color: 'blue', title: 'Revenue Opportunity', text: `Average price per item stands at KES ${_metrics.avg_price.toLocaleString()}. Introducing a premium tier or bundle offers could increase basket size without adding new customer acquisition costs.` });
-
-            // Location diversity
-            insights.push({ color: 'teal', title: 'Geographic Coverage', text: `Products are sold across ${_metrics.unique_locations} unique locations. Expanding to untapped areas or online channels could meaningfully grow the total addressable market.` });
-
-            // Product insight
-            if (_products.length)
-                insights.push({ color: 'gold', title: `Best-Selling Product`, text: `"${_products[0].product}" leads product sales at ${_products[0].percentage}% of transactions. Consider creating product bundles anchored to this item to boost cross-sell rates.` });
-
-            const grid = document.getElementById('insights-grid');
-            grid.innerHTML = insights.map(ins => `
-    <div class="insight-card ${ins.color}">
-      <h4>${ins.title}</h4>
-      <p>${ins.text}</p>
-    </div>`).join('');
+            if (m.total_revenue) insights.push({ color: 'blue', title: 'Revenue Opportunity', text: `Average unit price is KES ${m.avg_price.toLocaleString()}. A premium tier or bundle offers could increase basket size without extra acquisition costs.` });
+            insights.push({ color: 'teal', title: 'Geographic Coverage', text: `Products are sold across ${m.unique_locations} unique locations. Expanding to untapped areas or online channels could grow the addressable market.` });
+            if (prods.length) insights.push({ color: 'gold', title: 'Best-Selling Product', text: `"${prods[0].product}" leads at ${prods[0].percentage}% of transactions. Consider bundles anchored to this product to boost cross-sell rates.` });
+            document.getElementById('insights-grid').innerHTML = insights.map(ins => `<div class="insight-card ${ins.color}"><h4>${ins.title}</h4><p>${ins.text}</p></div>`).join('');
         }
 
-        /* ─── FILTER ─────────────────────────────────────── */
-        async function initFilter() {
-            try {
-                const [products, monthly] = await Promise.all([
-                    api('/api/product-list'), api('/api/monthly-trend')
-                ]);
+        /* ─── FILTER (init from cached dash data) ────────── */
+        function initFilterFromDash(dash) {
+            const sel = document.getElementById('filter-product');
+            // Clear existing options beyond the first "All Products"
+            while (sel.options.length > 1) sel.remove(1);
+            dash.product_list.forEach(p => {
+                const o = document.createElement('option');
+                o.value = p; o.textContent = p;
+                sel.appendChild(o);
+            });
 
-                const sel = document.getElementById('filter-product');
-                products.forEach(p => {
-                    const o = document.createElement('option');
-                    o.value = p; o.textContent = p;
-                    sel.appendChild(o);
-                });
+            const startInput = document.getElementById('filter-start');
+            const endInput   = document.getElementById('filter-end');
+            function toISO(d) { return d.toISOString().slice(0,10); }
 
-                const startInput = document.getElementById('filter-start');
-                const endInput = document.getElementById('filter-end');
-
-                function toISO(d) { return d.toISOString().slice(0,10); }
-
-                if (monthly && monthly.length) {
-                    // monthly entries expected to have `month_year` like "Apr 2026"
-                    const dates = monthly.map(m => {
-                        const my = m.month_year || m.Month || m.month;
-                        const parsed = new Date('1 ' + my);
-                        return isNaN(parsed) ? null : parsed;
-                    }).filter(Boolean).sort((a,b)=>a-b);
-
-                    if (dates.length) {
-                        const first = new Date(dates[0].getFullYear(), dates[0].getMonth(), 1);
-                        const last = new Date(dates[dates.length-1].getFullYear(), dates[dates.length-1].getMonth()+1, 0);
-                        startInput.min = toISO(first);
-                        startInput.max = toISO(last);
-                        endInput.min = toISO(first);
-                        endInput.max = toISO(last);
-                        if (!startInput.value) startInput.value = toISO(first);
-                        if (!endInput.value) endInput.value = toISO(last);
-                        return;
-                    }
+            if (dash.monthly && dash.monthly.length) {
+                const dates = dash.monthly.map(m => {
+                    const parsed = new Date('1 ' + (m.month_year || m.Month || m.month));
+                    return isNaN(parsed) ? null : parsed;
+                }).filter(Boolean).sort((a,b)=>a-b);
+                if (dates.length) {
+                    const first = new Date(dates[0].getFullYear(), dates[0].getMonth(), 1);
+                    const last  = new Date(dates[dates.length-1].getFullYear(), dates[dates.length-1].getMonth()+1, 0);
+                    startInput.min = toISO(first); startInput.max = toISO(last);
+                    endInput.min   = toISO(first); endInput.max   = toISO(last);
+                    if (!startInput.value) startInput.value = toISO(first);
+                    if (!endInput.value)   endInput.value   = toISO(last);
+                    return;
                 }
-
-                // Fallback: set to last 12 months
-                const now = new Date();
-                const prev = new Date(now); prev.setFullYear(now.getFullYear()-1);
-                startInput.min = toISO(prev);
-                startInput.max = toISO(now);
-                endInput.min = toISO(prev);
-                endInput.max = toISO(now);
-                if (!startInput.value) startInput.value = toISO(prev);
-                if (!endInput.value) endInput.value = toISO(now);
-
-            } catch(e) { console.warn('Filter init failed', e); }
+            }
+            const now = new Date(), prev = new Date(now);
+            prev.setFullYear(now.getFullYear()-1);
+            startInput.min = toISO(prev); startInput.max = toISO(now);
+            endInput.min   = toISO(prev); endInput.max   = toISO(now);
+            if (!startInput.value) startInput.value = toISO(prev);
+            if (!endInput.value)   endInput.value   = toISO(now);
         }
 
         async function applyFilter() {
@@ -1256,8 +1028,7 @@
         }
 
         /* ─── INIT ──────────────────────────────────────── */
-        loadAll();
-        initFilter();
+        loadAll(); // filter is initialized inside loadAll via initFilterFromDash
     </script>
 
 </html>

@@ -100,243 +100,124 @@ def get_dataframe() -> pd.DataFrame:
     return _cache["df"]
 
 
-# ─── KEY METRICS ──────────────────────────────────────────────────────────────
-@app.route("/api/key-metrics")
-def key_metrics():
-    df = get_dataframe()
+# ─── CONSOLIDATED DASHBOARD DATA (single Google Sheets fetch) ────────────────
+@app.route("/api/dashboard-data")
+def dashboard_data():
+    df    = get_dataframe()
+    total = len(df)
+    if total == 0:
+        return jsonify({"error": "No data found for the new products in the sheet."}), 404
 
-    total        = len(df)
-    female       = int((df["Gender"].str.lower() == "female").sum())
-    male         = int((df["Gender"].str.lower() == "male").sum())
-    female_pct   = round((female / total * 100), 1) if total else 0
-    male_pct     = round((male   / total * 100), 1) if total else 0
-    unique_locs  = int(df["Location"].nunique()) if "Location" in df.columns else 0
-
-    total_revenue  = round(float(df["Total"].sum()), 2)    if "Total"    in df.columns else 0
-    total_units    = int(df["Quantity"].sum())              if "Quantity" in df.columns else total
-    avg_price      = round(float(df["Price"].mean()), 2)   if "Price"    in df.columns else 0
-
-    # Date range
-    if "Date" in df.columns and df["Date"].notna().any():
-        min_date = df["Date"].min().strftime("%d %b %Y")
-        max_date = df["Date"].max().strftime("%d %b %Y")
-        date_range = f"{min_date} – {max_date}"
-    else:
-        date_range = "N/A"
-
-    # Top product
-    top_product = (
-        df["Product"].value_counts().idxmax()
-        if "Product" in df.columns and not df["Product"].empty
-        else "N/A"
-    )
-
-    # Top category
-    top_category = (
-        df["Category"].value_counts().idxmax()
-        if "Category" in df.columns and not df["Category"].empty
-        else "N/A"
-    )
-
-    return jsonify({
+    # ── Key metrics ──────────────────────────────────────────────────────────
+    female      = int((df["Gender"].str.lower() == "female").sum())
+    male        = int((df["Gender"].str.lower() == "male").sum())
+    metrics = {
         "total_customers" : total,
         "female_customers": female,
         "male_customers"  : male,
-        "female_pct"      : female_pct,
-        "male_pct"        : male_pct,
-        "unique_locations": unique_locs,
-        "date_range"      : date_range,
-        "total_revenue"   : total_revenue,
-        "total_units"     : total_units,
-        "avg_price"       : avg_price,
-        "top_product"     : top_product,
-        "top_category"    : top_category,
-    })
+        "female_pct"      : round(female / total * 100, 1) if total else 0,
+        "male_pct"        : round(male   / total * 100, 1) if total else 0,
+        "unique_locations": int(df["Location"].nunique()) if "Location" in df.columns else 0,
+        "total_revenue"   : round(float(df["Total"].sum()), 2)  if "Total"    in df.columns else 0,
+        "total_units"     : int(df["Quantity"].sum())            if "Quantity" in df.columns else total,
+        "avg_price"       : round(float(df["Price"].mean()), 2) if "Price"    in df.columns else 0,
+        "date_range"      : (
+            df["Date"].min().strftime("%d %b %Y") + " – " + df["Date"].max().strftime("%d %b %Y")
+            if "Date" in df.columns and df["Date"].notna().any() else "N/A"
+        ),
+        "top_product"  : df["Product"].value_counts().idxmax()  if "Product"  in df.columns and total else "N/A",
+        "top_category" : df["Category"].value_counts().idxmax() if "Category" in df.columns and total else "N/A",
+    }
 
+    # ── Colors ───────────────────────────────────────────────────────────────
+    color_counts = df["Color"].value_counts().reset_index()
+    color_counts.columns = ["color", "count"]
+    color_counts["percentage"] = (color_counts["count"] / total * 100).round(1)
 
-# ─── COLOR ANALYSIS ───────────────────────────────────────────────────────────
-@app.route("/api/color-analysis")
-def color_analysis():
-    df    = get_dataframe()
-    total = len(df)
-    counts = df["Color"].value_counts().reset_index()
-    counts.columns = ["color", "count"]
-    counts["percentage"] = (counts["count"] / total * 100).round(1)
-    return jsonify(counts.to_dict(orient="records"))
-
-
-# ─── LOCATION ANALYSIS ────────────────────────────────────────────────────────
-@app.route("/api/location-analysis")
-def location_analysis():
-    df    = get_dataframe()
-    total = len(df)
-    counts = df["Location"].value_counts().reset_index()
-    counts.columns = ["shop", "count"]
-    counts["percentage"] = (counts["count"] / total * 100).round(1)
-
-    # Revenue per location
+    # ── Locations ────────────────────────────────────────────────────────────
+    loc_counts = df["Location"].value_counts().reset_index()
+    loc_counts.columns = ["shop", "count"]
+    loc_counts["percentage"] = (loc_counts["count"] / total * 100).round(1)
     if "Total" in df.columns:
         rev = df.groupby("Location")["Total"].sum().reset_index()
         rev.columns = ["shop", "revenue"]
-        counts = counts.merge(rev, on="shop", how="left")
-        counts["revenue"] = counts["revenue"].round(2)
+        loc_counts = loc_counts.merge(rev, on="shop", how="left")
+        loc_counts["revenue"] = loc_counts["revenue"].round(2)
 
-    return jsonify(counts.to_dict(orient="records"))
+    # ── Weekly trend ─────────────────────────────────────────────────────────
+    weekly = []
+    if "Date" in df.columns and df["Date"].notna().any():
+        dw = df.dropna(subset=["Date"]).copy()
+        dw["Week_Start"] = dw["Date"].dt.to_period("W").dt.start_time
+        count_col = next((c for c in ["First Name", "Name", "Customer"] if c in dw.columns), dw.columns[0])
+        wk = dw.groupby("Week_Start").agg(count=(count_col, "count"), revenue=("Total", "sum")).reset_index()
+        wk = wk.sort_values("Week_Start")
+        wk["Week"] = wk["Week_Start"].dt.strftime("%d %b '%y")
+        wk["revenue"] = wk["revenue"].round(2)
+        weekly = wk.drop(columns=["Week_Start"]).to_dict(orient="records")
 
-
-# ─── WEEKLY SALES TREND ───────────────────────────────────────────────────────
-@app.route("/api/weekly-trend")
-def weekly_trend():
-    df = get_dataframe()
-    if "Date" not in df.columns or df["Date"].isna().all():
-        return jsonify([])
-
-    # Drop rows with unparseable dates before period conversion
-    df = df.dropna(subset=["Date"]).copy()
-    # Create an actual datetime column for chronological grouping
-    df["Week_Start"] = df["Date"].dt.to_period("W").dt.start_time
-
-    # Use whichever name/count column exists
-    count_col = next((c for c in ["First Name", "Name", "Customer"] if c in df.columns), df.columns[0])
-    weekly = df.groupby("Week_Start").agg(
-        count=(count_col, "count"),
-        revenue=("Total", "sum"),
-    ).reset_index()
-    
-    # Sort chronologically, then create the string label
-    weekly = weekly.sort_values("Week_Start")
-    weekly["Week"] = weekly["Week_Start"].dt.strftime("%d %b '%y")
-    weekly = weekly.drop(columns=["Week_Start"])
-    
-    weekly["revenue"] = weekly["revenue"].round(2)
-    return jsonify(weekly.to_dict(orient="records"))
-
-
-# ─── PRODUCT ANALYSIS ─────────────────────────────────────────────────────────
-@app.route("/api/product-analysis")
-def product_analysis():
-    df    = get_dataframe()
-    total = len(df)
-    counts = df["Product"].value_counts().reset_index()
-    counts.columns = ["product", "count"]
-    counts["percentage"] = (counts["count"] / total * 100).round(1)
-
+    # ── Products ─────────────────────────────────────────────────────────────
+    prod_counts = df["Product"].value_counts().reset_index()
+    prod_counts.columns = ["product", "count"]
+    prod_counts["percentage"] = (prod_counts["count"] / total * 100).round(1)
     if "Total" in df.columns:
-        rev = df.groupby("Product").agg(
-            total_revenue=("Total", "sum"),
-            avg_price=("Price", "mean"),
-        ).reset_index()
-        rev["total_revenue"] = rev["total_revenue"].round(2)
-        rev["avg_price"]     = rev["avg_price"].round(2)
-        counts = counts.merge(rev, on="product", how="left")
+        pr = df.groupby("Product").agg(total_revenue=("Total", "sum"), avg_price=("Price", "mean")).reset_index()
+        pr["total_revenue"] = pr["total_revenue"].round(2)
+        pr["avg_price"]     = pr["avg_price"].round(2)
+        prod_counts = prod_counts.merge(pr, on="product", how="left")
 
-    return jsonify(counts.to_dict(orient="records"))
+    # ── Categories ───────────────────────────────────────────────────────────
+    cat_counts = df["Category"].value_counts().reset_index()
+    cat_counts.columns = ["category", "count"]
+    cat_counts["percentage"] = (cat_counts["count"] / total * 100).round(1)
+    if "Total" in df.columns:
+        cr = df.groupby("Category")["Total"].sum().reset_index()
+        cr.columns = ["category", "revenue"]
+        cr["revenue"] = cr["revenue"].round(2)
+        cat_counts = cat_counts.merge(cr, on="category", how="left")
 
+    # ── Monthly trend ────────────────────────────────────────────────────────
+    monthly = []
+    if "Month-Year" in df.columns:
+        mn = df.groupby("Month-Year").agg(count=("First Name", "count"), revenue=("Total", "sum")).reset_index()
+        mn.columns = ["month_year", "count", "revenue"]
+        mn["revenue"] = mn["revenue"].round(2)
+        monthly = mn.to_dict(orient="records")
 
-# ─── BAGS PERFORMANCE ─────────────────────────────────────────────────────────
-@app.route("/api/bags-performance")
-def bags_performance():
-    df = get_dataframe()
-
-    # Since the vast majority of products are bags (even if not explicitly named 'bag'),
-    # we treat all valid product rows as bag-related for this breakdown.
-    bags_df = df.copy()
-
-    if bags_df.empty:
-        return jsonify({"message": "No bag products found", "data": []})
-
-    total_bags      = int(len(bags_df))
-    bag_revenue     = round(float(bags_df["Total"].sum()), 2)  if "Total" in bags_df.columns else 0
-    avg_bag_price   = round(float(bags_df["Price"].mean()), 2) if "Price" in bags_df.columns else 0
-
-    # Gender split for bags
-    female_bags = int((bags_df["Gender"].str.lower() == "female").sum())
-    male_bags   = int((bags_df["Gender"].str.lower() == "male").sum())
-
-    # Popular bag colors
-    bag_colors = bags_df["Color"].value_counts().head(5).reset_index()
+    # ── Bags performance ─────────────────────────────────────────────────────
+    bag_total   = total
+    bag_revenue = round(float(df["Total"].sum()), 2) if "Total" in df.columns else 0
+    bag_colors  = df["Color"].value_counts().head(5).reset_index()
     bag_colors.columns = ["color", "count"]
-
-    # Popular bag locations
-    bag_locs = bags_df["Location"].value_counts().head(5).reset_index()
+    bag_locs    = df["Location"].value_counts().head(5).reset_index()
     bag_locs.columns = ["location", "count"]
-
-    # Bag names breakdown
-    bag_names = bags_df["Product"].value_counts().reset_index()
+    bag_names   = df["Product"].value_counts().reset_index()
     bag_names.columns = ["product", "count"]
-    bag_names["percentage"] = (bag_names["count"] / total_bags * 100).round(1)
+    bag_names["percentage"] = (bag_names["count"] / bag_total * 100).round(1)
 
-    # Monthly trend for bags
-    if "Month-Year" in bags_df.columns:
-        monthly = bags_df.groupby("Month-Year").size().reset_index(name="count")
-    else:
-        monthly = []
+    # ── Product list (for filter dropdown) ───────────────────────────────────
+    products = sorted(df["Product"].dropna().unique().tolist())
 
     return jsonify({
-        "total_bags"   : total_bags,
-        "bag_revenue"  : bag_revenue,
-        "avg_bag_price": avg_bag_price,
-        "female_buyers": female_bags,
-        "male_buyers"  : male_bags,
-        "top_colors"   : bag_colors.to_dict(orient="records"),
-        "top_locations": bag_locs.to_dict(orient="records"),
-        "bag_names"    : bag_names.to_dict(orient="records"),
-        "monthly_trend": monthly if isinstance(monthly, list) else monthly.to_dict(orient="records"),
+        "metrics"   : metrics,
+        "colors"    : color_counts.to_dict(orient="records"),
+        "locations" : loc_counts.to_dict(orient="records"),
+        "weekly"    : weekly,
+        "products"  : prod_counts.to_dict(orient="records"),
+        "categories": cat_counts.to_dict(orient="records"),
+        "monthly"   : monthly,
+        "bags": {
+            "total_bags"   : bag_total,
+            "bag_revenue"  : bag_revenue,
+            "avg_bag_price": round(float(df["Price"].mean()), 2) if "Price" in df.columns else 0,
+            "female_buyers": int((df["Gender"].str.lower() == "female").sum()),
+            "male_buyers"  : int((df["Gender"].str.lower() == "male").sum()),
+            "top_colors"   : bag_colors.to_dict(orient="records"),
+            "top_locations": bag_locs.to_dict(orient="records"),
+            "bag_names"    : bag_names.to_dict(orient="records"),
+        },
+        "product_list": products,
     })
-
-
-# ─── CATEGORY ANALYSIS ────────────────────────────────────────────────────────
-@app.route("/api/category-analysis")
-def category_analysis():
-    df    = get_dataframe()
-    total = len(df)
-    counts = df["Category"].value_counts().reset_index()
-    counts.columns = ["category", "count"]
-    counts["percentage"] = (counts["count"] / total * 100).round(1)
-
-    if "Total" in df.columns:
-        rev = df.groupby("Category")["Total"].sum().reset_index()
-        rev.columns = ["category", "revenue"]
-        rev["revenue"] = rev["revenue"].round(2)
-        counts = counts.merge(rev, on="category", how="left")
-
-    return jsonify(counts.to_dict(orient="records"))
-
-
-# ─── MONTHLY TREND ────────────────────────────────────────────────────────────
-@app.route("/api/monthly-trend")
-def monthly_trend():
-    df = get_dataframe()
-    if "Month-Year" not in df.columns:
-        return jsonify([])
-    monthly = df.groupby("Month-Year").agg(
-        count=("First Name", "count"),
-        revenue=("Total", "sum"),
-    ).reset_index()
-    monthly.columns = ["month_year", "count", "revenue"]
-    monthly["revenue"] = monthly["revenue"].round(2)
-    return jsonify(monthly.to_dict(orient="records"))
-
-
-# ─── GENDER BY PRODUCT ────────────────────────────────────────────────────────
-@app.route("/api/gender-by-product")
-def gender_by_product():
-    df = get_dataframe()
-    pivot = (
-        df.groupby(["Product", "Gender"])
-        .size()
-        .unstack(fill_value=0)
-        .reset_index()
-    )
-    return jsonify(pivot.to_dict(orient="records"))
-
-
-# ─── PRODUCT LIST (for filter dropdown) ──────────────────────────────────────
-@app.route("/api/product-list")
-def product_list():
-    df = get_dataframe()
-    products = sorted(df["Product"].dropna().unique().tolist())
-    return jsonify(products)
 
 
 # ─── BAG / PRODUCT FILTER ─────────────────────────────────────────────────────
