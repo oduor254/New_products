@@ -716,7 +716,14 @@
                 ]);
             } catch (e) {
                 console.error(e);
-                alert('Error loading data. Check Flask is running and the sheet name is correct.');
+                // Fetch health check for a meaningful error message
+                try {
+                    const h = await fetch('/api/health');
+                    const hj = await h.json();
+                    alert('Dashboard error:\n\n' + (hj.error || JSON.stringify(hj)));
+                } catch (_) {
+                    alert('Error loading data.\n\nDetails: ' + e.message);
+                }
             }
             document.getElementById('refresh-btn').textContent = '↻ Refresh';
             buildInsights();
