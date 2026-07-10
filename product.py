@@ -405,6 +405,35 @@ def bag_filter():
     })
 
 
+# ─── HEALTH CHECK ────────────────────────────────────────────────────────────────
+@app.route("/api/health")
+def health():
+    import sys
+    status = {"python": sys.version, "ok": False}
+
+    creds_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    status["creds_source"] = "env_var" if creds_env else "local_file"
+
+    if not creds_env:
+        status["error"] = f"GOOGLE_CREDENTIALS_JSON env var not set — falling back to local file: {JSON_KEY_PATH}"
+        local_exists = os.path.exists(JSON_KEY_PATH)
+        status["local_file_exists"] = local_exists
+        if not local_exists:
+            return jsonify(status), 500
+
+    try:
+        creds  = _get_credentials()
+        client = gspread.authorize(creds)
+        sheet  = client.open_by_key(SPREADSHEET_ID).worksheet(WORKSHEET_NAME)
+        status["sheet_rows"] = len(sheet.get_all_values())
+        status["ok"] = True
+    except Exception as e:
+        status["error"] = str(e)
+        return jsonify(status), 500
+
+    return jsonify(status)
+
+
 # ─── SERVE DASHBOARD ────────────────────────────────────────────────────────────
 @app.route("/")
 def dashboard():
